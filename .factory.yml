@@ -1,3 +1,4 @@
 verify_command: "PYTHONPATH=src python -m pytest"
+full_suite_command: "PYTHONPATH=src python -m pytest"
 required_binaries: [python, pytest]
 preflight_profile: brownfield
