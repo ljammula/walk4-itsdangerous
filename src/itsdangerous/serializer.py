@@ -59,7 +59,7 @@ class Serializer(t.Generic[_TSerialized]):
         methods for serializing data to a string. Defaults to
         :attr:`default_serializer`, which defaults to :mod:`json`.
     :param serializer_kwargs: Keyword arguments to pass when calling
-        ``serializer.dumps``.
+        ``serializer.dumps`` and ``serializer.loads``.
     :param signer: A ``Signer`` class to instantiate when signing data.
         Defaults to :attr:`default_signer`, which defaults to
         :class:`~itsdangerous.signer.Signer`.
@@ -246,8 +246,9 @@ class Serializer(t.Generic[_TSerialized]):
         """Loads the encoded object. This function raises
         :class:`.BadPayload` if the payload is not valid. The
         ``serializer`` parameter can be used to override the serializer
-        stored on the class. The encoded ``payload`` should always be
-        bytes.
+        stored on the class. The selected serializer receives this
+        instance's ``serializer_kwargs``. The encoded ``payload`` should
+        always be bytes.
         """
         if serializer is None:
             use_serializer = self.serializer
@@ -258,9 +259,13 @@ class Serializer(t.Generic[_TSerialized]):
 
         try:
             if is_text:
-                return use_serializer.loads(payload.decode("utf-8"))  # type: ignore[arg-type]
+                return use_serializer.loads(  # type: ignore[arg-type]
+                    payload.decode("utf-8"), **self.serializer_kwargs
+                )
 
-            return use_serializer.loads(payload)  # type: ignore[arg-type]
+            return use_serializer.loads(  # type: ignore[arg-type]
+                payload, **self.serializer_kwargs
+            )
         except Exception as e:
             raise BadPayload(
                 "Could not load the payload because an exception"

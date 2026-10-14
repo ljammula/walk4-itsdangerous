@@ -1,4 +1,5 @@
 import hashlib
+import json
 import pickle
 from functools import partial
 from io import BytesIO
@@ -30,6 +31,30 @@ def coerce_str(ref: str | bytes, s: str) -> str | bytes:
         return s.encode("utf8")
 
     return s
+
+
+class KeywordSerializer:
+    def __init__(self, as_bytes: bool = False):
+        self.as_bytes = as_bytes
+        self.dumps_kwargs: list[dict[str, Any]] = []
+        self.loads_calls: list[tuple[str | bytes, dict[str, Any]]] = []
+
+    def dumps(self, obj: Any, **kwargs: Any) -> str | bytes:
+        self.dumps_kwargs.append(kwargs)
+        payload = json.dumps(obj)
+
+        if self.as_bytes:
+            return payload.encode()
+
+        return payload
+
+    def loads(self, payload: str | bytes, *, required: str) -> Any:
+        self.loads_calls.append((payload, {"required": required}))
+
+        if required != "configured":
+            raise ValueError("invalid required argument")
+
+        return json.loads(payload)
 
 
 class TestSerializer:
@@ -142,6 +167,76 @@ class TestSerializer:
         assert other.loads(other.dumps(value)) == value
         assert other.dumps("value") != serializer.dumps("value")
 
+    @pytest.mark.parametrize("as_bytes", (False, True))
+    def test_serializer_kwargs_load(self, as_bytes):
+        data_serializer = KeywordSerializer(as_bytes)
+        serializer = Serializer(
+            "secret_key",
+            serializer=data_serializer,
+            serializer_kwargs={"required": "configured"},
+        )
+        value = {"id": 42}
+
+        assert serializer.loads(serializer.dumps(value)) == value
+        assert data_serializer.dumps_kwargs[-1] == {"required": "configured"}
+        payload, kwargs = data_serializer.loads_calls[-1]
+        assert isinstance(payload, bytes if as_bytes else str)
+        assert kwargs == {"required": "configured"}
+
+    @pytest.mark.parametrize("as_bytes", (False, True))
+    def test_load_payload_serializer_override(self, as_bytes):
+        primary_serializer = KeywordSerializer(as_bytes)
+        override_serializer = KeywordSerializer(as_bytes)
+        serializer = Serializer(
+            "secret_key",
+            serializer=primary_serializer,
+            serializer_kwargs={"required": "configured"},
+        )
+        payload = serializer.dump_payload({"id": 42})
+
+        assert serializer.load_payload(payload, override_serializer) == {"id": 42}
+        assert not primary_serializer.loads_calls
+        override_payload, override_kwargs = override_serializer.loads_calls[-1]
+        assert isinstance(override_payload, bytes if as_bytes else str)
+        assert override_kwargs == {"required": "configured"}
+
+    @pytest.mark.parametrize(
+        ("serializer_kwargs", "error_type"),
+        (({}, TypeError), ({"required": "invalid"}, ValueError)),
+    )
+    def test_serializer_kwargs_load_error(self, serializer_kwargs, error_type):
+        data_serializer = KeywordSerializer()
+        serializer = Serializer(
+            "secret_key",
+            serializer=data_serializer,
+            serializer_kwargs=serializer_kwargs,
+        )
+
+        with pytest.raises(BadPayload) as exc_info:
+            serializer.load_payload(serializer.dump_payload({"id": 42}))
+
+        assert isinstance(exc_info.value.original_error, error_type)
+
+    def test_subclass_load_payload_dispatch(self):
+        data_serializer = KeywordSerializer()
+
+        class SubclassSerializer(Serializer):
+            load_payload_calls = 0
+
+            def load_payload(self, payload, serializer=None):
+                self.load_payload_calls += 1
+                return super().load_payload(payload, serializer)
+
+        serializer = SubclassSerializer(
+            "secret_key",
+            serializer=data_serializer,
+            serializer_kwargs={"required": "configured"},
+        )
+        value = {"id": 42}
+
+        assert serializer.loads(serializer.dumps(value)) == value
+        assert serializer.load_payload_calls == 1
+
     def test_serializer_kwargs(self, serializer_factory):
         serializer = serializer_factory(serializer_kwargs={"skipkeys": True})
 
@@ -150,7 +245,7 @@ class TestSerializer:
         except TypeError:
             return
 
-        assert serializer.loads(serializer.dumps({(): 1})) == {}
+        assert serializer.dump_payload({(): 1})
 
     def test_fallback_signers(self, serializer_factory, value: Any):
         serializer = serializer_factory(signer_kwargs={"digest_method": hashlib.sha256})
