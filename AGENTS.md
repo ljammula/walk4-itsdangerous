@@ -4,6 +4,6 @@ This repository is the `itsdangerous` Python package. Source uses a `src/` layou
 
 ## Verification
 
-- Run `python -m pytest` after changing package code or tests.
+- Run `PYTHONPATH=src python -m pytest` after changing package code or tests.
 - Preserve compatibility with the Python versions declared in `pyproject.toml`.
 - Keep serializer and signer behavior covered by focused regression tests.
