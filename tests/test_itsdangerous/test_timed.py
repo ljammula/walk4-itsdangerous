@@ -15,6 +15,15 @@ from test_itsdangerous.test_serializer import TestSerializer
 from test_itsdangerous.test_signer import TestSigner
 
 
+class FixedTimestampSigner(TimestampSigner):
+    def __init__(self, timestamp, *args, **kwargs):
+        self.timestamp = timestamp
+        super().__init__(*args, **kwargs)
+
+    def get_timestamp(self):
+        return self.timestamp
+
+
 class FreezeMixin:
     @pytest.fixture()
     def ts(self):
@@ -91,6 +100,56 @@ class TestTimestampSigner(FreezeMixin, TestSigner):
             signer.unsign(signed)
 
         assert isinstance(exc_info.value.date_signed, datetime)
+
+
+class TestFixedTimestampSigner:
+    def test_unrepresentable_timestamp_return_timestamp(self):
+        signer = FixedTimestampSigner(2**62, secret_key="secret-key")
+        signed = signer.sign("a")
+
+        with pytest.raises(BadTimeSignature) as exc_info:
+            signer.unsign(signed, return_timestamp=True)
+
+        assert "Malformed timestamp" in str(exc_info.value)
+        assert exc_info.value.payload == b"a"
+        assert exc_info.value.date_signed is None
+
+    def test_unrepresentable_timestamp_validate(self):
+        signer = FixedTimestampSigner(2**62, secret_key="secret-key")
+        signed = signer.sign("a")
+
+        assert not signer.validate(signed)
+
+    def test_unrepresentable_timestamp_payload_only(self):
+        signer = FixedTimestampSigner(2**62, secret_key="secret-key")
+        signed = signer.sign("a")
+
+        assert signer.unsign(signed, max_age=10) == b"a"
+
+    def test_fixed_timestamp_return_timestamp(self):
+        current_ts = datetime(2011, 6, 24, 0, 9, 5, tzinfo=timezone.utc)
+        signer = FixedTimestampSigner(
+            int(current_ts.timestamp()), secret_key="secret-key"
+        )
+        signed = signer.sign("a")
+
+        assert signer.unsign(signed, return_timestamp=True) == (b"a", current_ts)
+
+    def test_fixed_timestamp_expired(self):
+        current_ts = datetime(2011, 6, 24, 0, 9, 5, tzinfo=timezone.utc)
+        old_ts = current_ts - timedelta(seconds=11)
+        old_signer = FixedTimestampSigner(
+            int(old_ts.timestamp()), secret_key="secret-key"
+        )
+        signer = FixedTimestampSigner(
+            int(current_ts.timestamp()), secret_key="secret-key"
+        )
+        signed = old_signer.sign("a")
+
+        with pytest.raises(SignatureExpired) as exc_info:
+            signer.unsign(signed, max_age=10)
+
+        assert exc_info.value.date_signed == old_ts
 
 
 class TestTimedSerializer(FreezeMixin, TestSerializer):
