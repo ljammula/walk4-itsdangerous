@@ -134,6 +134,12 @@ class TimestampSigner(Signer):
         if ts_int is None:
             raise BadTimeSignature("Malformed timestamp", payload=value)
 
+        def _timestamp_to_datetime() -> datetime:
+            try:
+                return self.timestamp_to_datetime(ts_int)
+            except (ValueError, OSError, OverflowError) as exc:
+                raise BadTimeSignature("Malformed timestamp", payload=value) from exc
+
         # Check timestamp is not older than max_age
         if max_age is not None:
             age = self.get_timestamp() - ts_int
@@ -142,18 +148,18 @@ class TimestampSigner(Signer):
                 raise SignatureExpired(
                     f"Signature age {age} > {max_age} seconds",
                     payload=value,
-                    date_signed=self.timestamp_to_datetime(ts_int),
+                    date_signed=_timestamp_to_datetime(),
                 )
 
             if age < 0:
                 raise SignatureExpired(
                     f"Signature age {age} < 0 seconds",
                     payload=value,
-                    date_signed=self.timestamp_to_datetime(ts_int),
+                    date_signed=_timestamp_to_datetime(),
                 )
 
         if return_timestamp:
-            return value, self.timestamp_to_datetime(ts_int)
+            return value, _timestamp_to_datetime()
 
         return value
 
@@ -161,7 +167,7 @@ class TimestampSigner(Signer):
         """Only validates the given signed value. Returns ``True`` if
         the signature exists and is valid."""
         try:
-            self.unsign(signed_value, max_age=max_age)
+            self.unsign(signed_value, max_age=max_age, return_timestamp=True)
             return True
         except BadSignature:
             return False
